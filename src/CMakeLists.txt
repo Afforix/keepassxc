@@ -241,8 +241,11 @@ if(MINGW)
   )
 endif()
 
+include(FindPCSC)
+include_directories(${PCSC_INCLUDE_DIRS})
+
 add_executable(${PROGNAME} WIN32 MACOSX_BUNDLE ${keepassx_SOURCES_MAINEXE} ${WIN32_ProductVersionFiles})
-target_link_libraries(${PROGNAME} keepassx_core)
+target_link_libraries(${PROGNAME} keepassx_core ${PCSC_LIBRARIES})
 
 set_target_properties(${PROGNAME} PROPERTIES ENABLE_EXPORTS ON)
 

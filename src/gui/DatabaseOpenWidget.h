@@ -43,6 +43,7 @@ public:
 
 public slots:
     void pollYubikey();
+    void onJavaCard();
 
 signals:
     void editFinished(bool accepted);

@@ -32,9 +32,18 @@
 
 #include "config-keepassx.h"
 
+#include <PCSC/wintypes.h>
+#include <PCSC/winscard.h>
+
 #include <QtConcurrentRun>
 #include <QSharedPointer>
 
+#define CHECK(f, rv) \
+    if (SCARD_S_SUCCESS != rv) \
+{ \
+    printf(f ": %s\n", pcsc_stringify_error(rv)); \
+    return -1; \
+    }
 
 DatabaseOpenWidget::DatabaseOpenWidget(QWidget* parent)
     : DialogyWidget(parent)
@@ -60,6 +69,8 @@ DatabaseOpenWidget::DatabaseOpenWidget(QWidget* parent)
 
     connect(m_ui->buttonBox, SIGNAL(accepted()), SLOT(openDatabase()));
     connect(m_ui->buttonBox, SIGNAL(rejected()), SLOT(reject()));
+
+    connect(m_ui->javaCardButton, &QPushButton::clicked, this, &DatabaseOpenWidget::onJavaCard);
 
 #ifdef WITH_XC_YUBIKEY
     m_ui->yubikeyProgress->setVisible(false);
@@ -263,6 +274,98 @@ void DatabaseOpenWidget::pollYubikey()
 
     // YubiKey init is slow, detect asynchronously to not block the UI
     QtConcurrent::run(YubiKey::instance(), &YubiKey::detect);
+}
+
+void DatabaseOpenWidget::onJavaCard()
+{
+    qDebug() << "Java Card";
+    LONG rv;
+
+    SCARDCONTEXT hContext;
+    LPTSTR mszReaders;
+    SCARDHANDLE hCard;
+    DWORD dwReaders, dwActiveProtocol, dwRecvLength;
+
+    SCARD_IO_REQUEST pioSendPci;
+    BYTE pbRecvBuffer[258];
+    BYTE cmd1[] = { 0x00, 0xA4, 0x04, 0x00, 0x0A, 0xA0,
+                    0x00, 0x00, 0x00, 0x62, 0x03, 0x01, 0x0C, 0x06, 0x01 };
+//    BYTE cmd2[] = { 0x00, 0x00, 0x00, 0x00 };
+    BYTE cmd2[] = { 0x80, 0x00, 0x00, 0x00 };
+
+    unsigned int i;
+
+    rv = SCardEstablishContext(SCARD_SCOPE_SYSTEM, NULL, NULL, &hContext);
+    //    CHECK("SCardEstablishContext", rv)
+    if (rv != SCARD_S_SUCCESS) return;
+
+    dwReaders = SCARD_AUTOALLOCATE;
+
+    rv = SCardListReaders(hContext, NULL, (LPTSTR)&mszReaders, &dwReaders);
+    //    CHECK("SCardListReaders", rv)
+    if (rv != SCARD_S_SUCCESS) return;
+    printf("reader name: %s\n", mszReaders);
+
+    rv = SCardConnect(hContext, mszReaders, SCARD_SHARE_SHARED,
+                      SCARD_PROTOCOL_T0 | SCARD_PROTOCOL_T1, &hCard, &dwActiveProtocol);
+    //    CHECK("SCardConnect", rv)
+    if (rv != SCARD_S_SUCCESS) return;
+
+    switch(dwActiveProtocol)
+    {
+    case SCARD_PROTOCOL_T0:
+        pioSendPci = *SCARD_PCI_T0;
+        break;
+
+    case SCARD_PROTOCOL_T1:
+        pioSendPci = *SCARD_PCI_T1;
+        break;
+    }
+    dwRecvLength = sizeof(pbRecvBuffer);
+    rv = SCardTransmit(hCard, &pioSendPci, cmd1, sizeof(cmd1),
+                       NULL, pbRecvBuffer, &dwRecvLength);
+    //    CHECK("SCardTransmit", rv)
+    if (rv != SCARD_S_SUCCESS) return;
+
+    printf("response: ");
+    for(i=0; i<dwRecvLength; i++)
+        printf("%02X ", pbRecvBuffer[i]);
+    printf("\n");
+
+    dwRecvLength = sizeof(pbRecvBuffer);
+    rv = SCardTransmit(hCard, &pioSendPci, cmd2, sizeof(cmd2),
+                       NULL, pbRecvBuffer, &dwRecvLength);
+    //    CHECK("SCardTransmit", rv)
+    if (rv != SCARD_S_SUCCESS) return;
+
+    QString pass = QString::fromLocal8Bit(reinterpret_cast<char*>(pbRecvBuffer), dwRecvLength-2);
+    qDebug() << pass;
+
+    printf("response: ");
+    for(i=0; i<dwRecvLength; i++)
+        printf("%02X ", pbRecvBuffer[i]);
+    printf("\n");
+
+    rv = SCardDisconnect(hCard, SCARD_LEAVE_CARD);
+    //    CHECK("SCardDisconnect", rv)
+    if (rv != SCARD_S_SUCCESS) return;
+
+#ifdef SCARD_AUTOALLOCATE
+    rv = SCardFreeMemory(hContext, mszReaders);
+    //    CHECK("SCardFreeMemory", rv)
+    if (rv != SCARD_S_SUCCESS) return;
+#else
+    free(mszReaders);
+#endif
+
+    rv = SCardReleaseContext(hContext);
+
+    //    CHECK("SCardReleaseContext", rv)
+    if (rv != SCARD_S_SUCCESS) return;
+
+    qDebug() << "Password set!";
+
+    m_ui->editPassword->setText(pass);
 }
 
 void DatabaseOpenWidget::yubikeyDetected(int slot, bool blocking)

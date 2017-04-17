@@ -140,6 +140,13 @@
          </property>
         </widget>
        </item>
+       <item>
+        <widget class="QPushButton" name="javaCardButton">
+         <property name="text">
+          <string>JavaCard</string>
+         </property>
+        </widget>
+       </item>
       </layout>
      </item>
      <item row="5" column="2">
