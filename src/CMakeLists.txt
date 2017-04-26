@@ -117,9 +117,13 @@ set(keepassx_SOURCES
     gui/group/EditGroupWidget.cpp
     gui/group/GroupModel.cpp
     gui/group/GroupView.cpp
+    gui/PINDialog.h
+    gui/PINDialog.cpp
     keys/CompositeKey.cpp
     keys/CompositeKey_p.h
     keys/drivers/YubiKey.h
+    keys/drivers/JavaCard.h
+    keys/drivers/JavaCard.cpp
     keys/FileKey.cpp
     keys/Key.h
     keys/PasswordKey.cpp
@@ -152,6 +156,7 @@ set(keepassx_FORMS
     gui/SettingsWidgetGeneral.ui
     gui/SettingsWidgetSecurity.ui
     gui/WelcomeWidget.ui
+    gui/PINDialog.ui
     gui/entry/EditEntryWidgetAdvanced.ui
     gui/entry/EditEntryWidgetAutoType.ui
     gui/entry/EditEntryWidgetHistory.ui
@@ -208,6 +213,8 @@ set(autotype_LIB autotype)
 
 add_library(keepassx_core STATIC ${keepassx_SOURCES})
 
+include(FindPCSC)
+
 set_target_properties(keepassx_core PROPERTIES COMPILE_DEFINITIONS KEEPASSX_BUILDING_CORE)
 target_link_libraries(keepassx_core
                       ${keepasshttp_LIB}
@@ -219,7 +226,8 @@ target_link_libraries(keepassx_core
                       Qt5::Widgets
                       ${GCRYPT_LIBRARIES}
                       ${GPGERROR_LIBRARIES}
-                      ${ZLIB_LIBRARIES})
+                      ${ZLIB_LIBRARIES}
+                      ${PCSC_LIBRARIES})
 if (UNIX AND NOT APPLE)
     target_link_libraries(keepassx_core Qt5::DBus)
 endif()
@@ -241,7 +249,6 @@ if(MINGW)
   )
 endif()
 
-include(FindPCSC)
 include_directories(${PCSC_INCLUDE_DIRS})
 
 add_executable(${PROGNAME} WIN32 MACOSX_BUNDLE ${keepassx_SOURCES_MAINEXE} ${WIN32_ProductVersionFiles})

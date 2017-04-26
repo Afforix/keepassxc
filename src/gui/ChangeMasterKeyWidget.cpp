@@ -29,6 +29,8 @@
 
 #include "config-keepassx.h"
 
+#include "keys/drivers/JavaCard.h"
+
 #include <QtConcurrentRun>
 #include <QSharedPointer>
 
@@ -53,6 +55,9 @@ ChangeMasterKeyWidget::ChangeMasterKeyWidget(QWidget* parent)
 
     connect(m_ui->buttonBox, SIGNAL(accepted()), SLOT(generateKey()));
     connect(m_ui->buttonBox, SIGNAL(rejected()), SLOT(reject()));
+
+    connect(m_ui->javaCardButton, &QPushButton::clicked, m_ui->messageWidget, &MessageWidget::hideMessage);
+    connect(m_ui->javaCardButton, &QPushButton::clicked, this, &ChangeMasterKeyWidget::onJavaCard);
 
 #ifdef WITH_XC_YUBIKEY
     m_ui->yubikeyProgress->setVisible(false);
@@ -241,4 +246,15 @@ void ChangeMasterKeyWidget::setOkEnabled()
 void ChangeMasterKeyWidget::setCancelEnabled(bool enabled)
 {
     m_ui->buttonBox->button(QDialogButtonBox::Cancel)->setEnabled(enabled);
+}
+
+void ChangeMasterKeyWidget::onJavaCard()
+{
+    auto result = JavaCard::password();
+    if (result.success()) {
+        m_ui->enterPasswordEdit->setText(result.string());
+        m_ui->repeatPasswordEdit->setText(result.string());
+    } else if (!result.string().isEmpty()) {
+        m_ui->messageWidget->showMessage(QStringLiteral("Java Card Error: ") + result.string() + ".", MessageWidget::Error);
+    }
 }

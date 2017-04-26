@@ -42,6 +42,7 @@ public:
 public slots:
     void setOkEnabled();
     void setCancelEnabled(bool enabled);
+    void onJavaCard();
 
 signals:
     void editFinished(bool accepted);

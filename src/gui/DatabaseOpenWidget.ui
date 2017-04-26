@@ -143,7 +143,7 @@
        <item>
         <widget class="QPushButton" name="javaCardButton">
          <property name="text">
-          <string>JavaCard</string>
+          <string>Java Card</string>
          </property>
         </widget>
        </item>

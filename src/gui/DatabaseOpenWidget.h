@@ -71,6 +71,8 @@ protected:
 
 private:
     Q_DISABLE_COPY(DatabaseOpenWidget)
+
+    void showJavaCardError(const QString& s);
 };
 
 #endif // KEEPASSX_DATABASEOPENWIDGET_H
