@@ -17,48 +17,49 @@ class JavaCard {
     template< size_t size >
     using bytes = std::array< BYTE, size >;
 
-    static const unsigned char CLA = 0x80;
-
     static const bytes< 15 > select_apdu;
     static const bytes< 9 > pin_apdu_template;
     static const bytes< 2 > ok_apdu;
     static const bytes< 4 > get_password_apdu;
 
+    /**
+     * @brief The resource_handle class wraps any type of resource
+     * and releases it during destruction by the provided deleter.
+     */
     template< typename T >
-    class handle {
+    class resource_handle {
         T _resource = {};
         std::function< void(T) > _del;
 
-        void swap(handle& other) {
+        void swap(resource_handle& other) {
             std::swap(_resource, other._resource);
             std::swap(_del, other._del);
         }
 
     public:
-        handle() = default;
-        handle(const handle& other) = delete;
-        handle& operator=(const handle& other) = delete;
+        resource_handle() = default;
+        resource_handle(const resource_handle& other) = delete;
+        resource_handle& operator=(const resource_handle& other) = delete;
 
-        handle(handle&& other) {
+        resource_handle(resource_handle&& other) {
             swap(other);
         }
 
-        handle& operator=(handle&& other) {
-            handle tmp;
+        resource_handle& operator=(resource_handle&& other) {
+            resource_handle tmp;
             tmp.swap(other);
             swap(tmp);
             return *this;
         }
 
         template< typename Deleter >
-        handle(T res, Deleter del)
+        resource_handle(T res, Deleter del)
             : _resource(res)
             , _del(del)
         {}
 
-        ~handle() {
+        ~resource_handle() {
             if (_del) {
-                qDebug() << "Destructing handle";
                 _del(_resource);
             }
         }
@@ -67,17 +68,27 @@ class JavaCard {
         operator bool() const { return _del != nullptr; }
     };
 
+    /**
+     * @brief make_handle
+     * @param res resource to manage
+     * @param del deleter cleaning up the resource
+     * @return handle instance
+     */
     template< typename T, typename Deleter>
-    handle<T> make_handle(T res, Deleter del) {
-        return handle<T>(res, del);
+    resource_handle<T> make_handle(T res, Deleter del) {
+        return resource_handle<T>(res, del);
     }
 
-    handle< SCARDCONTEXT > context_handle;
-    handle< SCARDHANDLE > card_handle;
-
-    SCARD_IO_REQUEST pioSendPci = {};
+    resource_handle< SCARDCONTEXT > m_contextHandle;
+    resource_handle< SCARDHANDLE > m_cardHandle;
+    SCARD_IO_REQUEST m_ioSendPci = {};
 
 public:
+    /**
+     * @brief The Result class provides result of interaction with Java Card.
+     * Based on the success flag the contained string is an error message or
+     * a password.
+     */
     class Result {
         const bool m_success = false;
         const QString m_string;
@@ -90,30 +101,40 @@ public:
         const QString& string() const { return m_string; }
     };
 
+    /**
+     * @brief password does all the routines necessary for communication with Java Card.
+     * @return Instance of Result class containing error message or password.
+     */
     static Result password() {
+        // connect to the card
         JavaCard card;
         if (!card.connect()) {
             return {false, "Connection failed"};
         }
 
+        // ask user for the PIN
         PINDialog dialog;
         if (dialog.exec() == QDialog::Rejected) {
             return {false, {}};
         }
 
+        // check length of the PIN
         auto pin = dialog.pin();
         if (pin.length() != 4) {
             return {false, "PIN too short"};
         }
 
+        // transform ASCII characters to bytes
         std::array< unsigned char, 4 > pinBytes;
         std::transform(pin.begin(), pin.end(), pinBytes.begin(),
                        [](const QChar& c){ return c.digitValue(); });
 
+        // authenticate with the PIN
         if (!card.sendPin(pinBytes)) {
             return {false, "Invalid PIN"};
         }
 
+        // request password from the card
         auto pass = card.getPassword();
         if (pass.isEmpty()) {
             return {false, "Password load failed"};
@@ -122,10 +143,18 @@ public:
         return {true, pass};
     }
 
+    /**
+     * @brief isConnected
+     * @return true if the crad is already connected
+     */
     bool isConnected() const {
-        return context_handle && card_handle;
+        return m_contextHandle && m_cardHandle;
     }
 
+    /**
+     * @brief connect connects to a card
+     * @return true if connection was successful
+     */
     bool connect() {
         if (isConnected()) {
             return true;
@@ -144,7 +173,7 @@ public:
             {
                 return false;
             }
-            context_handle = make_handle(hContext, [](SCARDCONTEXT ctx){ SCardReleaseContext(ctx); });
+            m_contextHandle = make_handle(hContext, [](SCARDCONTEXT ctx){ SCardReleaseContext(ctx); });
 
             // reader name
             std::vector< char > readers;
@@ -176,24 +205,24 @@ public:
             {
                 return false;
             }
-            card_handle = make_handle(hCard, [](SCARDHANDLE card){ SCardDisconnect(card, SCARD_LEAVE_CARD); });
+            m_cardHandle = make_handle(hCard, [](SCARDHANDLE card){ SCardDisconnect(card, SCARD_LEAVE_CARD); });
         }
 
         switch(dwActiveProtocol)
         {
         case SCARD_PROTOCOL_T0:
-            pioSendPci = *SCARD_PCI_T0;
+            m_ioSendPci = *SCARD_PCI_T0;
             break;
 
         case SCARD_PROTOCOL_T1:
-            pioSendPci = *SCARD_PCI_T1;
+            m_ioSendPci = *SCARD_PCI_T1;
             break;
         }
 
-        // select
+        // select applet
         dwRecvLength = receive_buffer.size();
-        if (SCARD_S_SUCCESS != SCardTransmit(*card_handle,
-                                             &pioSendPci,
+        if (SCARD_S_SUCCESS != SCardTransmit(*m_cardHandle,
+                                             &m_ioSendPci,
                                              select_apdu.begin(),
                                              select_apdu.size(),
                                              nullptr,
@@ -206,31 +235,30 @@ public:
         return true;
     }
 
+    /**
+     * @brief sendPin authenticates with the provided PIN
+     * @param pin PIN
+     * @return true if PIN is valid
+     */
     bool sendPin(const bytes< 4 >& pin) {
-        qDebug() << "Sending PIN:" << QByteArray::fromRawData(
-                        reinterpret_cast<const char*>(pin.begin()), pin.size()).toHex();
         auto pin_apdu = pin_apdu_template;
         std::copy(pin.begin(), pin.end(), std::next(pin_apdu.begin(), 5));
 
-        qDebug() << "PIN APDU:" << QByteArray::fromRawData(
-                        reinterpret_cast<const char*>(pin_apdu.begin()), pin_apdu.size()).toHex();
         // send PIN APDU
         bytes< 258 > response;
         auto responseLength = response.size();
-        if (!SCardTransmit(*card_handle,
-                           &pioSendPci,
+        if (SCARD_S_SUCCESS != SCardTransmit(*m_cardHandle,
+                           &m_ioSendPci,
                            pin_apdu.begin(),
                            pin_apdu.size(),
                            nullptr,
                            response.begin(),
                            &responseLength))
         {
-            qDebug() << "Sending PIN failed";
             return false;
         }
 
-        qDebug() << "PIN response:" << QByteArray::fromRawData(
-                        reinterpret_cast<const char*>(response.begin()), responseLength).toHex();
+        // check response from the card
         if (responseLength != 2 || !std::equal(ok_apdu.begin(), ok_apdu.end(), response.begin())) {
             return false;
         }
@@ -238,11 +266,15 @@ public:
         return true;
     }
 
+    /**
+     * @brief getPassword requests password from the card
+     * @return password
+     */
     QString getPassword() {
         bytes< 258 > response;
         auto responseLength = response.size();
-        if (!SCardTransmit(*card_handle,
-                           &pioSendPci,
+        if (SCARD_S_SUCCESS != SCardTransmit(*m_cardHandle,
+                           &m_ioSendPci,
                            get_password_apdu.begin(),
                            get_password_apdu.size(),
                            nullptr,
